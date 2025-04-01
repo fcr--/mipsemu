@@ -49,6 +49,7 @@ BEGIN {
 #   "instr": list each instruction executed
 #   "syscall": list syscalls executed with params
 #   "writev": show the base and len of each iov in the writev syscall
+#   "write_u32": each time a word is written to memory at once
 
 function error(text) {
     print "\033[41mERROR:\033[0m " text >"/dev/stderr"
