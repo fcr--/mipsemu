@@ -3,15 +3,36 @@ BEGIN {
     # usual .org:   0x400000  # @ 4MiB
     VIDEO_RAM =   0x10000000  # @ 256MiB (768B for palette + 64000B for frame-buffer)
     GENERAL_RAM = 0x10010000  # @ 256MiB + 64kiB (grows upwards)
+    REG_AT = 1
     REG_V0 = 2
     REG_V1 = 3
     REG_A0 = 4
     REG_A1 = 5
     REG_A2 = 6
+    REG_A3 = 7
+    REG_T0 = 8
+    REG_T1 = 9
+    REG_T2 = 10
+    REG_T3 = 11
+    REG_T4 = 12
+    REG_T5 = 13
+    REG_T6 = 14
+    REG_T7 = 15
+    REG_S0 = 16
+    REG_S1 = 17
     REG_S2 = 18
+    REG_S3 = 19
+    REG_S4 = 20
+    REG_S5 = 21
+    REG_S6 = 22
+    REG_S7 = 23
+    REG_T8 = 24
     REG_T9 = 25
+    REG_K0 = 26
+    REG_K1 = 27
     REG_GP = 28
     REG_SP = 29
+    REG_FP = 30
     REG_RA = 31
 }
 
@@ -268,9 +289,16 @@ function run_emulator_instruction(MEM, CPU,
     instr = read_u32(MEM, pc)
     op = brshift(instr, 26)
     funct = instr % 0x40
-    if (DEBUG["regs"])
-        printf "  v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x s2=%08x t9=%08x gp=%08x\n", \
-               CPU[REG_V0], CPU[REG_V1], CPU[REG_A0], CPU[REG_A1], CPU[REG_A2], CPU[REG_S2], CPU[REG_T9], CPU[REG_GP]
+    if (DEBUG["regs"]) {
+        printf "              at=%08x v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x a3=%08x\n", \
+                            CPU[REG_AT], CPU[REG_V0], CPU[REG_V1], CPU[REG_A0], CPU[REG_A1], CPU[REG_A2], CPU[REG_A3]
+        printf "  t0=%08x t1=%08x t2=%08x t3=%08x t4=%08x t5=%08x t6=%08x t7=%08x\n", \
+               CPU[REG_T0], CPU[REG_T1], CPU[REG_T2], CPU[REG_T3], CPU[REG_T4], CPU[REG_T5], CPU[REG_T6], CPU[REG_T7]
+        printf "  s0=%08x s1=%08x s2=%08x s3=%08x s4=%08x s5=%08x s6=%08x s7=%08x\n", \
+               CPU[REG_S0], CPU[REG_S1], CPU[REG_S2], CPU[REG_S3], CPU[REG_S4], CPU[REG_S5], CPU[REG_S6], CPU[REG_S7]
+        printf "  t8=%08x t9=%08x k0=%08x k1=%08x gp=%08x sp=%08x fp=%08x ra=%08x\n", \
+               CPU[REG_T8], CPU[REG_T9], CPU[REG_K0], CPU[REG_K1], CPU[REG_GP], CPU[REG_SP], CPU[REG_FP], CPU[REG_RA]
+    }
     #for (tmp=0x412000; tmp<0x412030; tmp+=4) printf "  %x: %08x\n", tmp, read_u32(MEM, tmp)
     if (DEBUG["instr"]) printf "PC=%06x (%d): instr=0x%08x, op=0x%02x, funct=0x%02x\n", pc, CPU["CYCLES"], instr, op, funct
     rs = brshift(instr, 21) % 0x20
