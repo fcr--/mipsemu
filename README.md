@@ -12,6 +12,18 @@ Same for instructions, only a strict subset of the official MIPS32 instructions 
 
 If you really need an emulator use `qemu-mipsel` instead instead of this script.  I'm only writing this because I can.
 
+## Running the examples:
+
+```
+$ awk -vhex=test_basic1_nostdlib.hex -fmipsemu.awk -vdebug=instr,write_u32; echo $?
+[..]
+42
+$ awk -vhex=test_hello.hex -fmipsemu.awk
+hola mundo
+$ awk -vhex=test_hello_printf.hex -fmipsemu.awk
+hola mundo
+```
+
 ## Reference material:
 * Intro into MIPS assembly: https://courses.cs.washington.edu/courses/cse378/10sp/lectures/lec05-new.pdf
 * MIPS® Architecture for Programmers, Volume II-A: The MIPS32® Instruction Set Manual: https://hades.mech.northwestern.edu/images/1/16/MIPS32_Architecture_Volume_II-A_Instruction_Set.pdf
