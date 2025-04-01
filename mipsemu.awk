@@ -22,6 +22,7 @@ BEGIN {
 #   "NEXTPC": (u32|nil) value for the instruction pointer that should be used
 #       after running next instruction
 #   "TLS_TP": thread pointer, only one thread is supported.
+#   "CYCLES": how many instructions were executed in total
 
 # DEBUG: can be set by using -vdebug=[item1,item2,...]
 #   "instr": list each instruction executed
@@ -266,11 +267,12 @@ function run_emulator_instruction(MEM, CPU,
     }
     instr = read_u32(MEM, pc)
     op = brshift(instr, 26)
+    funct = instr % 0x40
     if (DEBUG["regs"])
         printf "  v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x s2=%08x t9=%08x gp=%08x\n", \
                CPU[REG_V0], CPU[REG_V1], CPU[REG_A0], CPU[REG_A1], CPU[REG_A2], CPU[REG_S2], CPU[REG_T9], CPU[REG_GP]
     #for (tmp=0x412000; tmp<0x412030; tmp+=4) printf "  %x: %08x\n", tmp, read_u32(MEM, tmp)
-    if (DEBUG["instr"]) printf "PC=%06x: instr=0x%08x, op=0x%02x\n", pc, instr, op
+    if (DEBUG["instr"]) printf "PC=%06x (%d): instr=0x%08x, op=0x%02x, funct=0x%02x\n", pc, CPU["CYCLES"], instr, op, funct
     rs = brshift(instr, 21) % 0x20
     rt = brshift(instr, 16) % 0x20
     rd = brshift(instr, 11) % 0x20
@@ -278,7 +280,6 @@ function run_emulator_instruction(MEM, CPU,
 
     switch (op) {
     case 0: # SPECIAL instructions: (op=0)
-        funct = instr % 0x40
         switch (funct) {
         case 0x0: # SLL rd, rt, sa
             tmp = brshift(instr, 6) % 0x20
@@ -405,7 +406,6 @@ function run_emulator_instruction(MEM, CPU,
         break
 
     case 0x1c: # SPECIAL2 Instructions
-        funct = instr % 0x40
         switch (funct) {
         case 0x2: # MUL rd, rs, rt
             lo1 = CPU[rs] % 0x10000
@@ -420,7 +420,6 @@ function run_emulator_instruction(MEM, CPU,
         break
 
     case 0x1f: # SPECIAL3 Instructions
-        funct = instr % 0x40
         switch (funct) {
         case 0x20: # BSHFL:
             tmp = brshift(instr, 6) % 0x20
@@ -459,6 +458,7 @@ function run_emulator_instruction(MEM, CPU,
     default:
         error("unknown regular instruction")
     }
+    CPU["CYCLES"]++
 }
 
 function syscall(MEM, CPU, nr, a0, a1, a2, a3,
