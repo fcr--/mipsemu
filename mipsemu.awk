@@ -1,8 +1,8 @@
 BEGIN {
-    INITIAL_SP =    0x300000  # @ 3MiB (a stack of 3MiB should be enough for everyone)
-    # usual .org:   0x400000  # @ 4MiB
-    VIDEO_RAM =   0x10000000  # @ 256MiB (768B for palette + 64000B for frame-buffer)
-    GENERAL_RAM = 0x10010000  # @ 256MiB + 64kiB (grows upwards)
+    INITIAL_SP =    h2d("300000")  # @ 3MiB (a stack of 3MiB should be enough for everyone)
+    # usual .org:   h2d("400000")  # @ 4MiB
+    VIDEO_RAM =   h2d("10000000")  # @ 256MiB (768B for palette + 64000B for frame-buffer)
+    GENERAL_RAM = h2d("10010000")  # @ 256MiB + 64kiB (grows upwards)
     REG_AT = 1
     REG_V0 = 2
     REG_V1 = 3
@@ -46,6 +46,7 @@ BEGIN {
 #   "CYCLES": how many instructions were executed in total
 
 # DEBUG: can be set by using -vdebug=[item1,item2,...]
+#   "args": print each of the argv[0]..argv[argc-1] and their addresses
 #   "instr": list each instruction executed
 #   "syscall": list syscalls executed with params
 #   "writev": show the base and len of each iov in the writev syscall
@@ -56,15 +57,29 @@ function error(text) {
     exit 1
 }
 
+function h2d(hex, dec,
+    i, c) {
+    hex = tolower(hex)
+    dec = H2D[hex]
+    if (dec != "") return dec
+    for (i=1; i<=length(hex); i++) {
+        c = index("0123456789abcdef", substr(hex, i, 1))
+        if (!c) error("invalid hex number «" hex "»")
+        dec = dec*16 + c-1
+    }
+    H2D[hex] = dec
+    return dec
+}
+
 function band(x, y,
     res, i) {
     # bitwise add, always returns unsigned integer
-    i = 1
-    while (x && y) {
+    if (num<0) error("invalid negative value")
+    res = 0
+    for (i = 1; x && y; i *= 2) {
         if ((x % 2) && (y % 2)) res += i
         x = int(x/2)
         y = int(y/2)
-        i *= 2
     }
     return res
 }
@@ -74,23 +89,41 @@ function bor(x, y) {
     return x - band(x, y) + y
 }
 
+function bxor(x, y) {
+    # clever bitwise or, always returns unsigned integer
+    return x + y - 2*band(x, y)
+}
+
 function blshift(num, times) {
-    return to_u32(num * 2^times)
+    if (num<0) error("invalid negative value")
+    return to_u32(num * POW2[times])
 }
 
 function brshift(num, times) {
     # does not work properly for negative numbers
-    return int(num / 2^times)
+    if (num<0) error("invalid negative value")
+    return int(num / POW2[times])
 }
 
 function barshift(num, times) {
     # does not work properly for negative numbers
-    if (num < 0x80000000) return int(num / 2^times)
-    return 0x100000000 - 2^times + int(num / 2^times)
+    if (num<0) error("invalid negative value")
+    if (!times) return num;
+    if (num < 0x80000000) return int(num / POW2[times])
+    return 0x100000000 - POW2[32-times] + int(num / POW2[times])
+}
+
+function clz(num,
+    i) {
+    # Count leading zeros of num, if num==0 then returns 32
+    if (num<0) error("invalid negative value")
+    if (!num) return 32
+    for (i = 0; num < 0x80000000; num*=2) i++;
+    return i
 }
 
 function load_elf_file(filename, ELF,
-    H2D, i, b, nline) {
+    i, b, nline) {
     # reads the hex file at filename, loading the byte array at ELF, parsing
     # the header into the following ELF keys:
     # - entry: memory address where the program starts (.org)
@@ -100,16 +133,12 @@ function load_elf_file(filename, ELF,
     # - shnum: number of section header entries
     # - shstrndx: index of the section header entry containing section names
 
-    # Dumb hex to decimal:
-    for (i = 0; i <= 0xff; i++)
-        H2D[sprintf("%02x", i)] = i
-
     # Load bytes:
     ELF["n"] = 0
     while ((getline <filename) > 0) {
         for (i = 1; i <= NF; i++) {
-            b = H2D[tolower($i)]
-            if (b == "") error("invalid line " $0 " at " $NR)
+            b = h2d(tolower($i))
+            if (b == "") error("invalid value «"tolower($i)"» line " $0 " at " $NR)
             ELF[ELF["n"]++] = b
         }
     }
@@ -122,27 +151,27 @@ function load_elf_file(filename, ELF,
         if (sprintf("%c", ELF[i]) != b) error("expected header "b" at "i": "ELF[i])
     }
     # Make sure everything else matches our expectations:
-    if (ELF[0x04] != 1) error("expected 32-bits executable")
-    if (ELF[0x05] != 1) error("expected little endian executable")
-    if (ELF[0x06] != 1) error("expected version 1 ELF")
-    if (ELF[0x07] != 0) error("expected NONE at OSABI, got: " ELF[0x07])
-    if (read_u16(ELF, 0x10) != 2) error("expected executable at 0x10")
-    if (read_u16(ELF, 0x12) != 8) error("mips?, got: "read_u16(ELF, 0x12))
-    if (read_u16(ELF, 0x14) != 1) error("v=1?, got: "read_u16(ELF, 0x12))
-    ELF["entry"] = read_u32(ELF, 0x18)
+    if (ELF[4] != 1) error("expected 32-bits executable")
+    if (ELF[5] != 1) error("expected little endian executable")
+    if (ELF[6] != 1) error("expected version 1 ELF")
+    if (ELF[7] != 0) error("expected NONE at OSABI, got: " ELF[7])
+    if (read_u16(ELF, 16) != 2) error("expected executable at 0x10")
+    if (read_u16(ELF, 18) != 8) error("mips?, got: "read_u16(ELF, 18))
+    if (read_u16(ELF, 20) != 1) error("v=1?, got: "read_u16(ELF, 20))
+    ELF["entry"] = read_u32(ELF, 24)
     # printf "entry: 0x%x\n", ELF["entry"]
-    ELF["phoff"] = read_u32(ELF, 0x1c)
-    ELF["shoff"] = read_u32(ELF, 0x20)
-    b = read_u32(ELF, 0x24)
+    ELF["phoff"] = read_u32(ELF, 28)
+    ELF["shoff"] = read_u32(ELF, 32)
+    b = read_u32(ELF, 36)
     if (band(b, 1) != 1) error("expected .noreorder, flags="b)
     # having PIC or CPIC is also allowed (and expected)
-    if (band(b, 0xf000) != 0x1000)
+    if (band(b, h2d("f000")) != h2d("1000"))
         error("expected o32 abi, got flags=0x" sprintf("%x", b))
-    if (band(b, 0xff0000))
-        error("EF_MIPS_MACH 0 expected, flags=0x", sprintf("%x", b))
-    if (read_u16(ELF, 0x28) != 52) error("unexpected ehsize")
-    if (read_u16(ELF, 0x2a) != 32) error("unexpected phentsize")
-    ELF["phnum"] = read_u16(ELF, 0x2c)
+    if (band(b, h2d("ff0000")))
+        error("EF_MIPS_MACH 0 expected, flags=0x" sprintf("%x", b))
+    if (read_u16(ELF, 40) != 52) error("unexpected ehsize")
+    if (read_u16(ELF, 42) != 32) error("unexpected phentsize")
+    ELF["phnum"] = read_u16(ELF, 44)
     if (ELF["shnum"] && read_u16(ELF, 0x2e) != 40) error("weird shentsize")
     ELF["shnum"] = read_u16(ELF, 0x30)
     ELF["shstrndx"] = read_u16(ELF, 0x32)  # usually the last section (shnum-1)
@@ -184,13 +213,14 @@ function load_elf_program(ELF, MEM, CPU,
 function load_stack(MEM, CPU, hex, args,
     ARGS, sp, OFFSETS, i, p, k, n) {
     sub(/\.hex$/, "", hex)
-    argc = split(args, ARGS, /\|/) + 1
+    argc = split(args, ARGS, /,/) + 1
     ARGS[0] = hex
 
     # let's place the actual strings in GENERAL_RAM and move it upwards
     sp = INITIAL_SP
     OFFSETS[n++] = argc
     for (i = 0; i < argc; i++) {
+        if (DEBUG["args"]) printf "arg[i] «%s» at @0x%x\n", ARGS[i], GENERAL_RAM
         OFFSETS[n++] = GENERAL_RAM
         GENERAL_RAM = write_zstr(MEM, GENERAL_RAM, ARGS[i])
     }
@@ -228,7 +258,7 @@ function write_u32(BYTES, p, value,
 function write_zstr(BYTES, p, text,
     i, c) {
     for (i = 0; i < length(text); i++)
-        BYTES[p++] = ORD[substr(text, i, 1)]
+        BYTES[p++] = ORD[substr(text, i+1, 1)]
     BYTES[p++] = 0
     return p
 }
@@ -270,7 +300,7 @@ function to_u32(value) {
 }
 
 function run_emulator_instruction(MEM, CPU,
-    instr, pc, op, rs, rt, imm, tmp, lo1, lo2, hi1, hi2) {
+    instr, pc, op, rs, rt, imm, tmp, lo1, lo2, hi1, hi2, p, q) {
     pc = CPU["PC"]
     # We use NEXTPC to simulate the branch-delay-slot
     if (CPU["NEXTPC"]) {
@@ -289,7 +319,7 @@ function run_emulator_instruction(MEM, CPU,
     }
     instr = read_u32(MEM, pc)
     op = brshift(instr, 26)
-    funct = instr % 0x40
+    funct = instr % 64
     if (DEBUG["regs"]) {
         printf "              at=%08x v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x a3=%08x\n", \
                             CPU[REG_AT], CPU[REG_V0], CPU[REG_V1], CPU[REG_A0], CPU[REG_A1], CPU[REG_A2], CPU[REG_A3]
@@ -299,192 +329,196 @@ function run_emulator_instruction(MEM, CPU,
                CPU[REG_S0], CPU[REG_S1], CPU[REG_S2], CPU[REG_S3], CPU[REG_S4], CPU[REG_S5], CPU[REG_S6], CPU[REG_S7]
         printf "  t8=%08x t9=%08x k0=%08x k1=%08x gp=%08x sp=%08x fp=%08x ra=%08x\n", \
                CPU[REG_T8], CPU[REG_T9], CPU[REG_K0], CPU[REG_K1], CPU[REG_GP], CPU[REG_SP], CPU[REG_FP], CPU[REG_RA]
+        printf "  HI=%08x LO=%08x\n", \
+               CPU["HI"], CPU["LO"]
     }
     #for (tmp=0x412000; tmp<0x412030; tmp+=4) printf "  %x: %08x\n", tmp, read_u32(MEM, tmp)
-    if (DEBUG["instr"]) printf "PC=%06x (%d): instr=0x%08x, op=0x%02x, funct=0x%02x\n", pc, CPU["CYCLES"], instr, op, funct
+    if (DEBUG["instr"]) printf "PC=%06x (%d): instr=%08x, op=%d, funct=%d\n", pc, CPU["CYCLES"], instr, op, funct
     rs = brshift(instr, 21) % 0x20
     rt = brshift(instr, 16) % 0x20
     rd = brshift(instr, 11) % 0x20
     imm = instr % 0x10000
 
-    switch (op) {
-    case 0: # SPECIAL instructions: (op=0)
-        switch (funct) {
-        case 0x0: # SLL rd, rt, sa
+    if (op==0) { # SPECIAL instructions: (op=0)
+        if (funct==0) { # SLL rd, rt, sa
             tmp = brshift(instr, 6) % 0x20
             CPU[rd] = blshift(CPU[rt], tmp)
-            break
-        case 0x2: # SRL rd, rt, sa
+        } else if (funct==2) { # SRL rd, rt, sa
             tmp = brshift(instr, 6) % 0x20
             CPU[rd] = brshift(CPU[rt], tmp)
-            break
-        case 0x3: # SRA rd, rt, sa
+        } else if (funct==3) { # SRA rd, rt, sa
             tmp = brshift(instr, 6) % 0x20
             CPU[rd] = barshift(CPU[rt], tmp)
-            break
-        case 0x5: # LSA rd, rs, rt, sa
-            # GPR[rd] := sign_extend.32( (GPR[rs] << (sa+1)) + GPR[rt] )
+        } else if (funct==4) { # SLLV rd, rt, rs
+            CPU[rd] = blshift(CPU[rt], CPU[rs] % 32)
+        } else if (funct==5) { # LSA rd, rs, rt, sa
+            # GPR[rd] <- sign_extend.32( (GPR[rs] << (sa+1)) + GPR[rt] )
             tmp = brshift(instr, 6) % 0x4
-            CPU[rd] = to_u32(lshift(CPU[rs], tmp) + CPU[rt])
-            break
-        case 0x8: # JR rs
+            CPU[rd] = to_u32(blshift(CPU[rs], tmp+1) + CPU[rt])
+        } else if (funct==6) { # SRLV rd, rt, rs
+            CPU[rd] = brshift(CPU[rt], CPU[rs] % 32)
+        } else if (funct==8) { # JR rs
             CPU["NEXTPC"] = CPU[rs]
-            break
-        case 0x9: # JALR [rd = 31 implied,] rs
+        } else if (funct==9) { # JALR [rd = 31 implied,] rs
             CPU[rd] = pc + 8
             CPU["NEXTPC"] = CPU[rs]
-            break
-        case 0xa: # MOVZ rd, rs, rt
+        } else if (funct==10) { # MOVZ rd, rs, rt
             if (!CPU[rt]) CPU[rd] = CPU[rs]
-            break
-        case 0xc: # SYSCALL code
+        } else if (funct==11) { # MOVN rd, rs, rt
+            if (CPU[rt]) CPU[rd] = CPU[rs]
+        } else if (funct==12) { # SYSCALL code
             CPU[REG_V0] = syscall(MEM, CPU, CPU[REG_V0], CPU[4], CPU[5], CPU[6], CPU[7])
-            break
-        case 0x12: # MFLO rd
+        } else if (funct==16) { # MFHI/CLZ
+            tmp = brshift(instr, 6) % 0x20
+            if (!tmp) CPU[rd] = CPU["HI"];
+            else error("clz or whatever is at " tmp " is not implemented")
+        } else if (funct==18) { # MFLO rd
             CPU[rd] = CPU["LO"]
-            break
-        case 0x1b: # DIVU rd, rs, rt
-            if (rd)
-                CPU[rd] = int(CPU[rs] / CPU[rt])
-            else {
-                CPU["LO"] = int(CPU[rs] / CPU[rt])
-                CPU["HI"] = CPU[rs] % CPU[rt]
+        } else if (funct==26) { # DIV/MOD [rd,] rs, rt
+            p = to_s32(CPU[rs])
+            q = to_s32(CPU[rt])
+            if (rd) { 
+                tmp = brshift(instr, 6) % 32
+                if (tmp == 2) CPU[rd] = to_u32(int(q / p))
+                else if (tmp == 3) CPU[rd] = to_u32(p % q)
+                else error("invalid SOP32 field " tmp)
+            } else {
+                CPU["LO"] = to_u32(int(p / q))
+                CPU["HI"] = to_u32(p % q)
             }
-            break
-        case 0x21: # ADDU rd, rs, rt
+        } else if (funct==27) { # DIVU/MODU [rd,] rs, rt
+            p = CPU[rs]
+            q = CPU[rt]
+            if (rd) {
+                tmp = brshift(instr, 6) % 32
+                if (tmp == 2) CPU[rd] = int(q / p)
+                else if (tmp == 3) CPU[rd] = p % q
+                else error("invalid SOP33 field " tmp)
+            } else {
+                CPU["LO"] = int(p / q)
+                CPU["HI"] = p % q
+            }
+        } else if (funct==33) { # ADDU rd, rs, rt
             CPU[rd] = to_u32(CPU[rs] + CPU[rt])
-            break
-        case 0x23: # SUBU rd, rs, rt
+        } else if (funct==35) { # SUBU rd, rs, rt
             CPU[rd] = to_u32(CPU[rs] - CPU[rt])
-            break
-        case 0x24: # AND rd, rs, rt
+        } else if (funct==36) { # AND rd, rs, rt
             CPU[rd] = band(CPU[rs], CPU[rt])
-            break
-        case 0x25: # OR rd, rs, rt
+        } else if (funct==37) { # OR rd, rs, rt
             CPU[rd] = bor(CPU[rs], CPU[rt])
-            break
-        case 0x26: # XOR rd, rs, rt
-            CPU[rd] = CPU[rs] + CPU[rt] - 2*band(CPU[rs], CPU[rt])
-            break
-        case 0x27: # NOR rd, rs, rt
+        } else if (funct==38) { # XOR rd, rs, rt
+            CPU[rd] = bxor(CPU[rs], CPU[rt])
+        } else if (funct==39) { # NOR rd, rs, rt
             CPU[rd] = 0xffffffff - bor(CPU[rs], CPU[rt])
-            break
-        case 0x2b: # SLTU rd, rs, rt
+        } else if (funct==42) { # SLT rd, rs, rt
+            CPU[rd] = (to_s32(CPU[rs]) < to_s32(CPU[rt])) ? 1 : 0
+        } else if (funct==43) { # SLTU rd, rs, rt
             CPU[rd] = (CPU[rs] < CPU[rt]) ? 1 : 0
-            break
-        case 0x34: # TEQ rs, rt, code
+        } else if (funct==52) { # TEQ rs, rt, code
             if (CPU[rs] == CPU[rt])
-                error(sprintf("trap with code 0x%x at 0x%x", int(imm/0x40), pc))
-            break
-        default:
-            error(sprintf("unknown special instruction, funct=0x%x", funct))
+                error(sprintf("trap with code %d at 0x%x", int(imm/0x40), pc))
+        } else {
+            error(sprintf("unknown special instruction, funct=%d", funct))
         }
-        break
 
-    case 1: # REGIMM instructions: (op=1)(rs)(rt)(immediate)
-        switch (rt) {
-        case 0x0: # BLTZ rs, offset
+    } else if (op==1) { # REGIMM instructions: (op=1)(rs)(rt)(immediate)
+        if (rt==0) { # BLTZ rs, offset
             if (CPU[rs] >= 0x80000000)
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-            break
-        case 0x1: # BGEZ rs, offset
+        } else if (rt==1) { # BGEZ rs, offset
             if (CPU[rs] < 0x80000000)
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-            break
-        case 0x11: # BGEZAL (BAL when rs=0, deprecated otherwise)
+        } else if (rt==3) { # BGEZL rs, offset
+            if (CPU[rs] < 0x80000000)
+                CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+        } else if (rt==17) { # BGEZAL (BAL when rs=0, deprecated otherwise)
             if (CPU[rs] < 0x80000000) {
                 CPU[REG_RA] = pc + 8
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
             }
-            break
-        default:
+        } else {
             error(sprintf("unknown regimm instruction, rt=0x%x", rt))
         }
-        break
 
     # Regular Instructions:
-    case 0x2: # J instr_index
+    } else if (op==0x2) { # J instr_index
         CPU["NEXTPC"] = int((pc+4)/0x10000000)*0x10000000 + instr%0x4000000*4
-        break
-    case 0x3: # JAL instr_index
+    } else if (op==0x3) { # JAL instr_index
         CPU[REG_RA] = pc + 8
         CPU["NEXTPC"] = int((pc+4)/0x10000000)*0x10000000 + instr%0x4000000*4
-        break
-    case 0x4: # BEQ rs, rt, imm
+    } else if (op==0x4) { # BEQ rs, rt, imm
         if (CPU[rs] == CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-        break
-    case 0x5: # BNE rs, rt, imm
+    } else if (op==0x5) { # BNE rs, rt, imm
         if (CPU[rs] != CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-        break
-    case 0x9: # ADDIU rt, rs, imm
+    } else if (op==0x7) { # BGTZ rs, imm
+        if (CPU[rt]) error("POP07 is not supported")
+        tmp = CPU[rs]
+        if (tmp && tmp < 0x80000000)
+            CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+    } else if (op==0x9) { # ADDIU rt, rs, imm
         CPU[rt] = to_u32(CPU[rs] + to_s16(imm))
-        break
-    case 0xb: # SLTIU rt, rs, imm
+    } else if (op==0xa) { # SLTI rt, rs, imm
+        CPU[rt] = (to_s32(CPU[rs]) < to_s16(imm)) ? 1 : 0
+    } else if (op==0xb) { # SLTIU rt, rs, imm
         CPU[rt] = (CPU[rs] < to_u32(to_s16(imm))) ? 1 : 0
-        break
-    case 0xc: # ANDI rt, rs, imm
+    } else if (op==0xc) { # ANDI rt, rs, imm
         CPU[rt] = band(CPU[rs], imm)
-        break
-    case 0xd: # ORI rt, rs, imm
+    } else if (op==0xd) { # ORI rt, rs, imm
         CPU[rt] = bor(CPU[rs], imm)
-        break
-    case 0xf: # LUI rt, imm
+    } else if (op==0xe) { # XORI rt, rs, imm
+        CPU[rt] = bxor(CPU[rs], imm)
+    } else if (op==0xf) { # LUI rt, imm
         CPU[rt] = imm * 0x10000
-        break
+    } else if (op==0x15) { # BNEL rs, rt, imm
+        if (CPU[rs] != CPU[rt])
+            CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+    } else if (op==0x17) { # BGTZL rs, imm
+        if (CPU[rt]) error("POP27 is not supported")
+        tmp = CPU[rs]
+        if (tmp && tmp < 0x80000000)
+            CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
 
-    case 0x1c: # SPECIAL2 Instructions
-        switch (funct) {
-        case 0x2: # MUL rd, rs, rt
+    } else if (op==0x1c) { # SPECIAL2 Instructions
+        if (funct==0x2) { # MUL rd, rs, rt
             lo1 = CPU[rs] % 0x10000
             lo2 = CPU[rt] % 0x10000
             hi1 = int(CPU[rs] / 0x10000)
             hi2 = int(CPU[rt] / 0x10000)
-            CPU[rd] = to_u32(lo1*lo2 + (lo1*hi2 + lo2*hi1)*0x10000)
-            break
-        default:
+            CPU[rd] = to_u32(lo1*lo2 + to_u16(lo1*hi2 + lo2*hi1)*0x10000)
+        } else if (funct==0x20) { # CLZ rd, rs
+            CPU[rd] = clz(CPU[rs])
+        } else {
             error(sprintf("unknown SPECIAL2 instruction 0x%x", funct))
         }
-        break
 
-    case 0x1f: # SPECIAL3 Instructions
-        switch (funct) {
-        case 0x20: # BSHFL:
+    } else if (op==0x1f) { # SPECIAL3 Instructions
+        if (funct==0x20) { # BSHFL:
             tmp = brshift(instr, 6) % 0x20
-            switch (tmp) {
-            case 0x10: # SEB rd, rt
+            if (tmp==0x10) { # SEB rd, rt
                 CPU[rd] = to_s8(CPU[rt])
-                break
-            default:
+            } else {
                 error(sprintf("unknown BSHFL instruction 0x%x", tmp))
             }
-            break
-        case 0x3b: # RDHWR rt, rd[, sel]
+        } else if (funct==0x3b) { # RDHWR rt, rd[, sel]
             if (rd != 29)
                 error("RDHWR only supports reading hw register $29")
             CPU[rt] = CPU["TLS_TP"]
-            break
-        default:
+        } else {
             error(sprintf("unknown SPECIAL3 instruction 0x%x", funct))
         }
-        break
-    case 0x20: # LB rt, imm(rs)
-        CPU[rt] = to_s8(MEM[CPU[rs] + to_s16(imm)])
-        break
-    case 0x23: # LW rt, imm(rs)
+    } else if (op==32) { # LB rt, imm(rs)
+        CPU[rt] = to_u32(to_s8(MEM[CPU[rs] + to_s16(imm)]))
+    } else if (op==0x23) { # LW rt, imm(rs)
         CPU[rt] = read_u32(MEM, CPU[rs] + to_s16(imm))
-        break
-    case 0x24: # LBU rt, imm(rs)
-        CPU[rt] = MEM[CPU[rs] + to_s16(imm)]
-        break
-    case 0x28: # SB rt, imm(rs)
+    } else if (op==36) { # LBU rt, imm(rs)
+        CPU[rt] = MEM[CPU[rs] + to_s16(imm)] + 0
+    } else if (op==0x28) { # SB rt, imm(rs)
         MEM[CPU[rs] + to_s16(imm)] = CPU[rt] % 256
-        break
-    case 0x2b: # SW rt, imm(rs)
+    } else if (op==0x2b) { # SW rt, imm(rs)
         write_u32(MEM, CPU[rs] + to_s16(imm), CPU[rt])
-        break
-    default:
+    } else {
         error("unknown regular instruction")
     }
     CPU["CYCLES"]++
@@ -494,21 +528,19 @@ function syscall(MEM, CPU, nr, a0, a1, a2, a3,
     lo, fd, s, i, base, len, j) {
     # Called when a SYSCALL instruction is issued.
     if (DEBUG["syscall"]) printf "syscall(%d, 0x%x, 0x%x, 0x%x, 0x%x)\n", nr, a0, a1, a2, a3
-    switch (nr - 4000) {
-    case 54: # int ioctl(int fd, unsigned long request, ...);
+    nr -= 4000
+    if (nr==54) { # int ioctl(int fd, unsigned long request, ...);
         # uppermost 2 bits of a0 contain DIR (_IO=0, _IOW=1, _IOR=2, _IOWR=3)
         # then 14 bits for the size of the structure.
         # then 8 bits for the type
         # and finally the lower 8 bits for the number
-        switch (a0) {
-            case 0x40087468: # TIOCGWINSZ=_IOR('t', 104, struct winsize): get window size
-                # man ioctl_tty
-                write_u32(MEM, a1, 80 * 0x10000 + 24)  # lie saying it's 80x24
-                write_u32(MEM, a1+4, 0)  # we don't even know the size
-                break
+        if (a0==0x40087468) { # TIOCGWINSZ=_IOR('t', 104, struct winsize): get window size
+            # man ioctl_tty
+            write_u32(MEM, a1, 80 * 0x10000 + 24)  # lie saying it's 80x24
+            write_u32(MEM, a1+4, 0)  # we don't even know the size
         }
         return 0
-    case 146: # ssize_t writev(int fd, const struct iovec *iov, int iovcnt);
+    } else if (nr==146) { # ssize_t writev(int fd, const struct iovec *iov, int iovcnt);
         fd = a0==1?"/dev/stdout" : a0==2?"/dev/stderr" : ""
         if (!fd) return -9  #-EBADF
         for (i = 0; i < a2; i++) {
@@ -520,15 +552,15 @@ function syscall(MEM, CPU, nr, a0, a1, a2, a3,
         }
         printf "%s", s >fd
         return length(s)
-    case 246: # void exit(int status);
+    } else if (nr==246) { # void exit(int status);
         exit a0
-    case 252: # pid_t set_tid_address(int *tidptr);
+    } else if (nr==252) { # pid_t set_tid_address(int *tidptr);
         # store tidptr somewhere... I guess
         return 42  # the thread_id
-    case 283: # int set_thread_area(unsigned long addr):
+    } else if (nr==283) { # int set_thread_area(unsigned long addr):
         CPU["TLS_TP"] = a0
         return 0
-    default:
+    } else {
         error("unknown syscall! use -vdebug=syscall")
     }
 }
@@ -538,15 +570,19 @@ function run_emulator(MEM, CPU) {
 }
 
 function main(hex, args,
-    ELF, MEM, CPU, i, A) {
+    ELF, MEM, CPU, i, n, A) {
     if (!hex) error("hex is undefined, run emulator with -vhex=filename.hex")
 
     # Load ORD (array inverse to λc.sprintf("%c", c))
     for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i
 
+    # pre-calculate 2^i for i in [0..32] (busybox awk not always supports ^)
+    POW2[0] = 1
+    for (i = 1; i <= 32; i++) POW2[i] = 2 * POW2[i-1]
+
     # load DEBUG from debug
-    A["n"] = split(debug, A, ",")
-    for (i = 1; i <= A["n"]; i++) DEBUG[A[i]]++
+    n = split(debug, A, ",")
+    for (i = 1; i <= n; i++) DEBUG[A[i]]++
 
     load_elf_file(hex, ELF)
     load_elf_program(ELF, MEM, CPU)

@@ -15,13 +15,15 @@ If you really need an emulator use `qemu-mipsel` instead instead of this script.
 ## Running the examples
 
 ```
-$ awk -vhex=test_basic1_nostdlib.hex -fmipsemu.awk -vdebug=instr,write_u32; echo $?
+$ LC_ALL=C awk -vhex=test_basic1_nostdlib.hex -fmipsemu.awk -vdebug=instr,write_u32; echo $?
 [..]
 42
-$ awk -vhex=test_hello.hex -fmipsemu.awk
+$ LC_ALL=C awk -vhex=test_hello.hex -fmipsemu.awk
 hola mundo
-$ awk -vhex=test_hello_printf.hex -fmipsemu.awk
+$ LC_ALL=C awk -vhex=test_hello_printf.hex -fmipsemu.awk
 hola mundo
+$ LC_ALL=C awk -vhex=test_calc.hex -fmipsemu.awk -vargs=1,18,sub,3,2,mul,1,index,1,index,mod,exch,dup,3,index,exch,idiv,mul,add
+stack: -17,-17
 ```
 
 ## TODO
