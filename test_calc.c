@@ -39,8 +39,14 @@ int main(int argc, char * argv[]) {
             "<token> can be an integer number or an operation, if it's an integer\n"
             "it's going to be pushed in the stack, otherwise operations are:\n"
             "\n"
-            "int1 int2 <add> int:  adds the last two numbers\n"
-            "int1 int2 <sub> int:  computes int1 - int2\n",
+            "int1 int2 <add>   int:       computes int1 + int2\n"
+            "        v <dup>   v:         duplicates top value\n"
+            "    v1 v2 <exch>  v2 v1:     swaps top two values\n"
+            "int1 int2 <idiv>  int:       computes signed division int1 / int2\n"
+            "  vn…v0 n <index> vn…v0 vn:  pushes the n-th value\n"
+            "int1 int2 <mod>   int:       computes the remainder of dividing int1 by int2\n"
+            "int1 int2 <mul>   int:       computes int1 * int2\n"
+            "int1 int2 <sub>   int:       computes int1 - int2\n",
             *argv
         );
     }
