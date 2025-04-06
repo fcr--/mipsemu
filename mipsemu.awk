@@ -431,56 +431,69 @@ function run_emulator_instruction(MEM, CPU,
         } else if (rt==3) { # BGEZL rs, offset
             if (CPU[rs] < 0x80000000)
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+            else # nullify delay slot:
+                CPU["PC"] = pc + 8
         } else if (rt==17) { # BGEZAL (BAL when rs=0, deprecated otherwise)
             if (CPU[rs] < 0x80000000) {
                 CPU[REG_RA] = pc + 8
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
             }
+        else # nullify delay slot:
+            CPU["PC"] = pc + 8
         } else {
             error(sprintf("unknown regimm instruction, rt=0x%x", rt))
         }
 
     # Regular Instructions:
-    } else if (op==0x2) { # J instr_index
+    } else if (op==2) { # J instr_index
         CPU["NEXTPC"] = int((pc+4)/0x10000000)*0x10000000 + instr%0x4000000*4
-    } else if (op==0x3) { # JAL instr_index
+    } else if (op==3) { # JAL instr_index
         CPU[REG_RA] = pc + 8
         CPU["NEXTPC"] = int((pc+4)/0x10000000)*0x10000000 + instr%0x4000000*4
-    } else if (op==0x4) { # BEQ rs, rt, imm
+    } else if (op==4) { # BEQ rs, rt, imm
         if (CPU[rs] == CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-    } else if (op==0x5) { # BNE rs, rt, imm
+    } else if (op==5) { # BNE rs, rt, imm
         if (CPU[rs] != CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-    } else if (op==0x7) { # BGTZ rs, imm
+    } else if (op==7) { # BGTZ rs, imm
         if (CPU[rt]) error("POP07 is not supported")
         tmp = CPU[rs]
         if (tmp && tmp < 0x80000000)
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-    } else if (op==0x9) { # ADDIU rt, rs, imm
+    } else if (op==9) { # ADDIU rt, rs, imm
         CPU[rt] = to_u32(CPU[rs] + to_s16(imm))
-    } else if (op==0xa) { # SLTI rt, rs, imm
+    } else if (op==10) { # SLTI rt, rs, imm
         CPU[rt] = (to_s32(CPU[rs]) < to_s16(imm)) ? 1 : 0
-    } else if (op==0xb) { # SLTIU rt, rs, imm
+    } else if (op==11) { # SLTIU rt, rs, imm
         CPU[rt] = (CPU[rs] < to_u32(to_s16(imm))) ? 1 : 0
-    } else if (op==0xc) { # ANDI rt, rs, imm
+    } else if (op==12) { # ANDI rt, rs, imm
         CPU[rt] = band(CPU[rs], imm)
-    } else if (op==0xd) { # ORI rt, rs, imm
+    } else if (op==13) { # ORI rt, rs, imm
         CPU[rt] = bor(CPU[rs], imm)
-    } else if (op==0xe) { # XORI rt, rs, imm
+    } else if (op==14) { # XORI rt, rs, imm
         CPU[rt] = bxor(CPU[rs], imm)
-    } else if (op==0xf) { # LUI rt, imm
+    } else if (op==15) { # LUI rt, imm
         CPU[rt] = imm * 0x10000
-    } else if (op==0x15) { # BNEL rs, rt, imm
+    } else if (op==20) { # BEQL rs, rt, imm
+        if (CPU[rs] == CPU[rt])
+            CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+        else # nullify delay slot:
+            CPU["PC"] = pc + 8
+    } else if (op==21) { # BNEL rs, rt, imm
         if (CPU[rs] != CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
-    } else if (op==0x17) { # BGTZL rs, imm
+        else # nullify delay slot:
+            CPU["PC"] = pc + 8
+    } else if (op==23) { # BGTZL rs, imm
         if (CPU[rt]) error("POP27 is not supported")
         tmp = CPU[rs]
         if (tmp && tmp < 0x80000000)
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+        else # nullify delay slot:
+            CPU["PC"] = pc + 8
 
-    } else if (op==0x1c) { # SPECIAL2 Instructions
+    } else if (op==28) { # SPECIAL2 Instructions
         if (funct==0x2) { # MUL rd, rs, rt
             lo1 = CPU[rs] % 0x10000
             lo2 = CPU[rt] % 0x10000
@@ -493,8 +506,8 @@ function run_emulator_instruction(MEM, CPU,
             error(sprintf("unknown SPECIAL2 instruction 0x%x", funct))
         }
 
-    } else if (op==0x1f) { # SPECIAL3 Instructions
-        if (funct==0x20) { # BSHFL:
+    } else if (op==31) { # SPECIAL3 Instructions
+        if (funct==32) { # BSHFL:
             tmp = brshift(instr, 6) % 0x20
             if (tmp==0x10) { # SEB rd, rt
                 CPU[rd] = to_s8(CPU[rt])
@@ -510,11 +523,11 @@ function run_emulator_instruction(MEM, CPU,
         }
     } else if (op==32) { # LB rt, imm(rs)
         CPU[rt] = to_u32(to_s8(MEM[CPU[rs] + to_s16(imm)]))
-    } else if (op==0x23) { # LW rt, imm(rs)
+    } else if (op==35) { # LW rt, imm(rs)
         CPU[rt] = read_u32(MEM, CPU[rs] + to_s16(imm))
     } else if (op==36) { # LBU rt, imm(rs)
         CPU[rt] = MEM[CPU[rs] + to_s16(imm)] + 0
-    } else if (op==0x28) { # SB rt, imm(rs)
+    } else if (op==40) { # SB rt, imm(rs)
         MEM[CPU[rs] + to_s16(imm)] = CPU[rt] % 256
     } else if (op==0x2b) { # SW rt, imm(rs)
         write_u32(MEM, CPU[rs] + to_s16(imm), CPU[rt])
