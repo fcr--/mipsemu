@@ -12,18 +12,23 @@ all: $(addsuffix .hex, $(ALL))
 %.hex: %
 	od -A n -v -tx1 $^ | sed 's/^ *//' > $@
 
+# comment the strip commands if you need debug info
+
 %_nostdlib: %_nostdlib.c
 	$(CC) $^ -o $@ -nostdlib $(CFLAGS)
-	#strip --strip-section-headers $@
+	strip --strip-section-headers $@
 
 %: %.c
 	$(CC) $^ -o $@ -static $(CFLAGS)
-	#strip --strip-section-headers $@
+	strip --strip-section-headers $@
 	
 
 %.S: %.c
 	$(CC) $^ -o $@ -S $(CFLAGS)
 
-.PHONY: clean all
+.PHONY: clean all tests
 clean: 
 	rm -f $(ALL) *.hex *.S
+
+tests: all
+	awk -ftest_calc.awk -vname=$(name)
