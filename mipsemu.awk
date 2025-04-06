@@ -172,9 +172,9 @@ function load_elf_file(filename, ELF,
     if (read_u16(ELF, 40) != 52) error("unexpected ehsize")
     if (read_u16(ELF, 42) != 32) error("unexpected phentsize")
     ELF["phnum"] = read_u16(ELF, 44)
-    if (ELF["shnum"] && read_u16(ELF, 0x2e) != 40) error("weird shentsize")
-    ELF["shnum"] = read_u16(ELF, 0x30)
-    ELF["shstrndx"] = read_u16(ELF, 0x32)  # usually the last section (shnum-1)
+    if (ELF["shnum"] && read_u16(ELF, 46) != 40) error("weird shentsize")
+    ELF["shnum"] = read_u16(ELF, 48)
+    ELF["shstrndx"] = read_u16(ELF, 50)  # usually the last section (shnum-1)
 }
 
 function load_elf_program(ELF, MEM, CPU,
@@ -194,13 +194,13 @@ function load_elf_program(ELF, MEM, CPU,
             # PT_LOAD:
             for (i = 0; i < filesz; i++) MEM[vaddr + i] = ELF[offset + i]
             #printf "loaded %d bytes at 0x%x to 0x%x\n", filesz, offset, vaddr
-        } else if (type == 0x70000000) {
+        } else if (type == h2d("70000000")) {
             # PT_MIPS_REGINFO
             #CPU[REG_GP] = read_u32(ELF, offset + 0x4 * 5)
             #printf "$gp=0x%x\n", CPU[REG_GP]
-        } else if (type == 0x70000003) {
+        } else if (type == h2d("70000003")) {
             # PT_MIPS_ABIFLAGS (ignored)
-        } else if (type == 0x6474e551) {
+        } else if (type == h2d("6474e551")) {
             # PT_GNU_STACK: for stack NX (ignored)
         } else {
             printf "unknown program header at phoff=0x%d: " \
@@ -311,14 +311,16 @@ function run_emulator_instruction(MEM, CPU,
     }
     # Just in case section:
     CPU[0] = 0
-    for (rs = 1; rs < 32; rs++) {
-        tmp = CPU[rs]
-        if(tmp<0) error("negative register found, check previous instruction!")
-        if(tmp>0xffffffff) error("reg > 2^32-1 found, check previous instruction!")
-        if(tmp!=int(tmp)) error("register with float, check previous instruction!")
+    if (!DEBUG["nocheckregs"]) {
+        for (rs = 1; rs < 32; rs++) {
+            tmp = CPU[rs]
+            if (tmp<0) error("negative register found, check previous instruction!")
+            if (tmp>4294967295) error("reg > 2^32-1 found, check previous instruction!")
+            if (tmp!=int(tmp)) error("register with float, check previous instruction!")
+        }
     }
     instr = read_u32(MEM, pc)
-    op = brshift(instr, 26)
+    op = int(instr / 67108864)  # (instr >> 26)
     funct = instr % 64
     if (DEBUG["regs"]) {
         printf "              at=%08x v0=%08x v1=%08x a0=%08x a1=%08x a2=%08x a3=%08x\n", \
@@ -334,10 +336,10 @@ function run_emulator_instruction(MEM, CPU,
     }
     #for (tmp=0x412000; tmp<0x412030; tmp+=4) printf "  %x: %08x\n", tmp, read_u32(MEM, tmp)
     if (DEBUG["instr"]) printf "PC=%06x (%d): instr=%08x, op=%d, funct=%d\n", pc, CPU["CYCLES"], instr, op, funct
-    rs = brshift(instr, 21) % 32
-    rt = brshift(instr, 16) % 32
-    rd = brshift(instr, 11) % 32
-    shmt = brshift(instr, 6) % 32
+    rs = int(instr / 2097152) % 32  # (instr>>21) & 0x1f
+    rt = int(instr / 65536) % 32    # (instr>>16) & 0x1f
+    rd = int(instr / 2048) % 32     # (instr>>11) & 0x1f
+    shmt = int(instr / 64) % 32     # (instr>>6) & 0x1f
     imm = instr % 0x10000  # = rd || shmt || bits 5..0
 
     if (op==0) { # SPECIAL instructions: (op=0)
