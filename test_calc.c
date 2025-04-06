@@ -111,6 +111,27 @@ void command_sub() { int x = pop(); push(pop() - x); }
 void command_weight() { push(__builtin_popcount(pop())); }
 void command_xor() { push(pop() ^ pop()); }
 
+void command_zzzext() {
+    // eg: 0x12345678 zzzext 0x34, or in decimal: 52
+    push((pop()>>16) & 0xff);
+}
+void command_zzzins() {
+    // This command was crafted to match one of the few cases where GCC
+    // uses the INS MIPS32 instruction.
+    // eg: 0x12345678 0x9abdef zzzins 0x12abdef8, or in decimal: 313253624
+    unsigned int ins = pop();
+    union {
+        int num;
+        struct {
+            unsigned int a : 4;
+            unsigned int b : 20;
+            unsigned int c : 8;
+        } bits;
+    } rt = { .num = pop() };
+    rt.bits.b = ins;
+    push(rt.num);
+}
+
 int main(int argc, char * argv[]) {
     //printf("argc=%d\n", argc);
     if (argc < 2 || !strcmp(argv[1], "--help")) {
@@ -153,6 +174,9 @@ int main(int argc, char * argv[]) {
     register_command("sub", command_sub);
     register_command("weight", command_weight);
     register_command("xor", command_xor);
+    // secret instructions, don't tell anyone:
+    register_command("zzzext", command_zzzext);
+    register_command("zzzins", command_zzzins);
 
     for (int i = 1; i < argc; i++) {
         char * endptr;
