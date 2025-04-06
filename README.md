@@ -28,6 +28,7 @@ stack: -17,-17
 
 ## TODO
 
+* [ ] Remove literal hex constants from mipsemu.awk (gawk extension)
 * [ ] Implement examples that use argc & argv, and gradually increase the supported instruction subset:
   * [ ] add a 32bit signed & unsigned calculator.
   * [ ] add a 64bit calculator (same as before).
