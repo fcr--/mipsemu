@@ -300,7 +300,7 @@ function to_u32(value) {
 }
 
 function run_emulator_instruction(MEM, CPU,
-    instr, pc, op, rs, rt, imm, tmp, lo1, lo2, hi1, hi2, p, q) {
+    instr, pc, op, rs, rt, shmt, imm, tmp, lo1, lo2, hi1, hi2, p, q) {
     pc = CPU["PC"]
     # We use NEXTPC to simulate the branch-delay-slot
     if (CPU["NEXTPC"]) {
@@ -334,21 +334,19 @@ function run_emulator_instruction(MEM, CPU,
     }
     #for (tmp=0x412000; tmp<0x412030; tmp+=4) printf "  %x: %08x\n", tmp, read_u32(MEM, tmp)
     if (DEBUG["instr"]) printf "PC=%06x (%d): instr=%08x, op=%d, funct=%d\n", pc, CPU["CYCLES"], instr, op, funct
-    rs = brshift(instr, 21) % 0x20
-    rt = brshift(instr, 16) % 0x20
-    rd = brshift(instr, 11) % 0x20
-    imm = instr % 0x10000
+    rs = brshift(instr, 21) % 32
+    rt = brshift(instr, 16) % 32
+    rd = brshift(instr, 11) % 32
+    shmt = brshift(instr, 6) % 32
+    imm = instr % 0x10000  # = rd || shmt || bits 5..0
 
     if (op==0) { # SPECIAL instructions: (op=0)
         if (funct==0) { # SLL rd, rt, sa
-            tmp = brshift(instr, 6) % 0x20
-            CPU[rd] = blshift(CPU[rt], tmp)
+            CPU[rd] = blshift(CPU[rt], shmt)
         } else if (funct==2) { # SRL rd, rt, sa
-            tmp = brshift(instr, 6) % 0x20
-            CPU[rd] = brshift(CPU[rt], tmp)
+            CPU[rd] = brshift(CPU[rt], shmt)
         } else if (funct==3) { # SRA rd, rt, sa
-            tmp = brshift(instr, 6) % 0x20
-            CPU[rd] = barshift(CPU[rt], tmp)
+            CPU[rd] = barshift(CPU[rt], shmt)
         } else if (funct==4) { # SLLV rd, rt, rs
             CPU[rd] = blshift(CPU[rt], CPU[rs] % 32)
         } else if (funct==5) { # LSA rd, rs, rt, sa
@@ -357,6 +355,8 @@ function run_emulator_instruction(MEM, CPU,
             CPU[rd] = to_u32(blshift(CPU[rs], tmp+1) + CPU[rt])
         } else if (funct==6) { # SRLV rd, rt, rs
             CPU[rd] = brshift(CPU[rt], CPU[rs] % 32)
+        } else if (funct==7) { # SRAV rd, rt, rs
+            CPU[rd] = barshift(CPU[rt], CPU[rs] % 32)
         } else if (funct==8) { # JR rs
             CPU["NEXTPC"] = CPU[rs]
         } else if (funct==9) { # JALR [rd = 31 implied,] rs
@@ -369,19 +369,33 @@ function run_emulator_instruction(MEM, CPU,
         } else if (funct==12) { # SYSCALL code
             CPU[REG_V0] = syscall(MEM, CPU, CPU[REG_V0], CPU[4], CPU[5], CPU[6], CPU[7])
         } else if (funct==16) { # MFHI/CLZ
-            tmp = brshift(instr, 6) % 0x20
-            if (!tmp) CPU[rd] = CPU["HI"];
-            else error("clz or whatever is at " tmp " is not implemented")
+            if (!shmt) CPU[rd] = CPU["HI"];
+            else error("clz or whatever is at " shmt " is not implemented")
         } else if (funct==18) { # MFLO rd
             CPU[rd] = CPU["LO"]
+        } else if (funct==25) { # (SOP31: MULU/MUHU) MULTU rs, rt
+            lo1 = CPU[rs] % POW2[16]
+            lo2 = CPU[rt] % POW2[16]
+            hi1 = int(CPU[rs] / POW2[16])
+            hi2 = int(CPU[rt] / POW2[16])
+            tmp = lo1*hi2 + lo2*hi1
+            p = lo1*lo2 + to_u16(tmp)*0x10000
+            q = hi1*hi2 + brshift(tmp, 16) + int(p / POW2[32])
+            if (shmt==0) { # MULTU
+                CPU["LO"] = to_u32(p)
+                CPU["HI"] = q
+            } else if (shmt==2) # MULU
+                CPU[rd] = to_u32(p)
+            else if (shmt==3) # MUHU
+                CPU[rd] = q
+            else error("invalid SOP31 field " shmt)
         } else if (funct==26) { # DIV/MOD [rd,] rs, rt
             p = to_s32(CPU[rs])
             q = to_s32(CPU[rt])
             if (rd) { 
-                tmp = brshift(instr, 6) % 32
-                if (tmp == 2) CPU[rd] = to_u32(int(q / p))
-                else if (tmp == 3) CPU[rd] = to_u32(p % q)
-                else error("invalid SOP32 field " tmp)
+                if (shmt == 2) CPU[rd] = to_u32(int(q / p))
+                else if (shmt == 3) CPU[rd] = to_u32(p % q)
+                else error("invalid SOP32 field " shmt)
             } else {
                 CPU["LO"] = to_u32(int(p / q))
                 CPU["HI"] = to_u32(p % q)
@@ -428,6 +442,11 @@ function run_emulator_instruction(MEM, CPU,
         } else if (rt==1) { # BGEZ rs, offset
             if (CPU[rs] < 0x80000000)
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+        } else if (rt==2) { # BLTZL rs, offset
+            if (CPU[rs] >= 0x80000000)
+                CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+            else # nullify delay slot:
+                CPU["PC"] = pc + 8
         } else if (rt==3) { # BGEZL rs, offset
             if (CPU[rs] < 0x80000000)
                 CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
@@ -456,8 +475,13 @@ function run_emulator_instruction(MEM, CPU,
     } else if (op==5) { # BNE rs, rt, imm
         if (CPU[rs] != CPU[rt])
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
+    } else if (op==6) { # BLEZ rs, imm
+        if (rt) error("(POP06) BLEZALC, BGEZALC are not supported")
+        tmp = CPU[rs]
+        if (!tmp || tmp >= 0x80000000)
+            CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
     } else if (op==7) { # BGTZ rs, imm
-        if (CPU[rt]) error("POP07 is not supported")
+        if (rt) error("POP07 is not supported")
         tmp = CPU[rs]
         if (tmp && tmp < 0x80000000)
             CPU["NEXTPC"] = pc + 4 + to_s16(imm) * 4
@@ -507,19 +531,36 @@ function run_emulator_instruction(MEM, CPU,
         }
 
     } else if (op==31) { # SPECIAL3 Instructions
-        if (funct==32) { # BSHFL:
-            tmp = brshift(instr, 6) % 0x20
-            if (tmp==0x10) { # SEB rd, rt
+        if (funct==0) { # EXT rt, rs, pos, size
+            CPU[rt] = brshift(CPU[rs], shmt) % POW2[rd+1]
+        } else if (funct==4) { # INS rt, rs, pos, size
+            # shmt = pos
+            # rd = pos+size-1
+            # size = rd-pos+1 = rd-shmt+1
+            # highest 32-(pos+size) bits from CPU[rt] shifted to (pos+size)
+            tmp = CPU[rt]
+            tmp -= tmp % POW2[rd+1]  # remove lowest rd+1 bits
+            # restore lowest pos bits from CPU[rt]:
+            tmp += CPU[rt] % POW2[shmt]
+            # lowest size bits from CPU[rs] shifted to pos:
+            CPU[rt] = tmp + (CPU[rs] % POW2[rd-shmt+1]) * POW2[shmt]
+
+            # eg: pos=2, size=8  => rd=9
+            #   tmp = CPU[rt] - CPU[rt]%POW2[10]
+            #   tmp += CPU[rt] % POW2[2]
+            #   CPU[rt] = tmp + (CPU[rs] % POW2[8]) * POW2[2]
+        } else if (funct==32) { # BSHFL:
+            if (shmt==0x10) { # SEB rd, rt
                 CPU[rd] = to_s8(CPU[rt])
             } else {
-                error(sprintf("unknown BSHFL instruction 0x%x", tmp))
+                error(sprintf("unknown BSHFL instruction 0x%x", shmt))
             }
         } else if (funct==0x3b) { # RDHWR rt, rd[, sel]
             if (rd != 29)
                 error("RDHWR only supports reading hw register $29")
             CPU[rt] = CPU["TLS_TP"]
         } else {
-            error(sprintf("unknown SPECIAL3 instruction 0x%x", funct))
+            error(sprintf("unknown SPECIAL3 instruction %d", funct))
         }
     } else if (op==32) { # LB rt, imm(rs)
         CPU[rt] = to_u32(to_s8(MEM[CPU[rs] + to_s16(imm)]))
