@@ -24,6 +24,8 @@ $ LC_ALL=C awk -vhex=test_hello_printf.hex -fmipsemu.awk
 hola mundo
 $ LC_ALL=C awk -vhex=test_calc.hex -fmipsemu.awk -vargs=1,18,sub,3,2,mul,1,index,1,index,mod,exch,dup,3,index,exch,idiv,mul,add
 stack: -17,-17
+$ make tests
+[..] (hopefully a ton of "✅ ok" lines)
 ```
 
 ## TODO
