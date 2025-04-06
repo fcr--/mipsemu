@@ -8,9 +8,9 @@ A very slow (and potentially very buggy) emulator for running statically linked 
 
 Speaking of syscalls only a very little subset is implemented, which eventually will grow.
 
-Same for instructions, only a strict subset of the official MIPS32 instructions are implemented, and once again, this set will grow as more examples are added.
+Same for instructions, only a strict subset of the official MIPS32 instructions are implemented, and once again, this set will grow as more examples are added, but be aware that will be tons of bugs in their implementation.
 
-If you really need an emulator use `qemu-mipsel` instead instead of this script.  I'm only writing this because I can.
+If you really need an emulator, use `qemu-mipsel` instead instead of this script.  I'm only writing this because I can.
 
 ## Running the examples
 
