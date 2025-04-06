@@ -4,11 +4,11 @@ function run_tests( \
     cmd = "LC_ALL=C awk -vhex=test_calc.hex -fmipsemu.awk -vargs=" args
     cmd | getline res
     if (res != ("stack: " expected)) {
-        print "error"
+        print "❌ error"
         printf "received %s\n", res >"/dev/stderr"
         exit 1
     } else {
-        print "ok"
+        print "✅ ok"
         close(cmd)
     }
     args = ""
