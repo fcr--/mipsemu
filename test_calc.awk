@@ -21,14 +21,21 @@ function add_test(more_args, more_expected) {
 }
 
 BEGIN {
-    add_test("0,0,add", "0")
-    add_test("1,1,add", "2")
-    add_test("1,-1,add", "0")
-    add_test("-2,1,add", "-1")
-    add_test("0x7fffffff,1,add", "-2147483648")
-    add_test("-0x3fffffff,0x40000002,add", "3")
+    add_test("0,0,add", 0)
+    add_test("1,1,add", 2)
+    add_test("1,-1,add", 0)
+    add_test("-2,1,add", -1)
+    add_test("0x7fffffff,1,add", -2147483648)
+    add_test("-0x3fffffff,0x40000002,add", 3)
     run_tests()
 
-    add_test("0,0,sub", "0")
+    add_test("0,0,sub", 0)
+    run_tests()
+
+    add_test("-1,zzzext", 255)
+    add_test("0x12345678,zzzext", 52)
+    add_test("-1,0,zzzins", -16777201)
+    add_test("0,-1,zzzins", 16777200)
+    add_test("0x12345678,0x9abdef,zzzins", 313253624)
     run_tests()
 }
