@@ -20,15 +20,15 @@ all: $(addsuffix .hex, $(ALL))
 
 %_nostdlib: %_nostdlib.c
 	$(CC) $^ -o $@ -nostdlib $(CFLAGS)
-	strip --strip-section-headers $@
+	#strip --strip-section-headers $@
 
 %: %.c
 	$(CC) $^ -o $@ -static $(CFLAGS)
-	strip --strip-section-headers $@
+	#strip --strip-section-headers $@
 
 %: %.S
 	$(CC) $^ -o $@ -nostdlib $(CFLAGS)
-	strip --strip-section-headers $@
+	#strip --strip-section-headers $@
 
 %.S: %.c
 	$(CC) $^ -o $@ -S $(CFLAGS)
