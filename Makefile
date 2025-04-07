@@ -5,7 +5,11 @@ CFLAGS += -Os -fomit-frame-pointer -march=24kc
 GCC_PREFIX ?= mipsel-openwrt-linux-musl
 CC = $(GCC_PREFIX)-gcc
 
-ALL = test_basic1_nostdlib test_hello test_hello_printf test_calc
+ALL = test_basic1_nostdlib \
+      test_calc \
+      test_hello \
+      test_hello_asm \
+      test_hello_printf
 .PRECIOUS: $(ALL)  # <3
 all: $(addsuffix .hex, $(ALL))
 
@@ -21,14 +25,17 @@ all: $(addsuffix .hex, $(ALL))
 %: %.c
 	$(CC) $^ -o $@ -static $(CFLAGS)
 	strip --strip-section-headers $@
-	
+
+%: %.S
+	$(CC) $^ -o $@ -nostdlib $(CFLAGS)
+	strip --strip-section-headers $@
 
 %.S: %.c
 	$(CC) $^ -o $@ -S $(CFLAGS)
 
 .PHONY: clean all tests
 clean: 
-	rm -f $(ALL) *.hex *.S
+	rm -f $(ALL) *.hex $(addsuffix .S, $(basename $(wildcard *.c)))
 
 tests: all
 	awk -ftest_calc.awk -vname=$(name)
