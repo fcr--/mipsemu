@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define MAX_STACK_SIZE 1024
 
@@ -78,6 +79,14 @@ command_fn_t * find_command(const char *name) {
 
 void command_add() { push(pop() + pop()); }
 void command_and() { push(pop() & pop()); }
+void command_array() {
+    int size = pop();
+    if (sizeof(void*) > 4) error(1, "pointers are too powerful for this command\n");
+    if (size < 0) error(1, "negative size\n");
+    int mem = (int)malloc(size * 4);
+    if (!mem) error(1, "error mallocating ram for %d words\n", size);
+    push(mem);
+}
 void command_bitshift() {
     int shift = pop();
     unsigned int num = pop();
@@ -177,6 +186,7 @@ int main(int argc, char * argv[]) {
     }
     register_command("add", command_add);
     register_command("and", command_and);
+    register_command("array", command_array);
     register_command("bitshift", command_bitshift);
     register_command("copy", command_copy);
     register_command("count", command_count);
