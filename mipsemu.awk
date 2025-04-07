@@ -1,8 +1,13 @@
+# external globals
+#   debug
+#   hex
+#   args
 BEGIN {
     INITIAL_SP =    h2d("300000")  # @ 3MiB (a stack of 3MiB should be enough for everyone)
     # usual .org:   h2d("400000")  # @ 4MiB
     VIDEO_RAM =   h2d("10000000")  # @ 256MiB (768B for palette + 64000B for frame-buffer)
     GENERAL_RAM = h2d("10010000")  # @ 256MiB + 64kiB (grows upwards)
+    BRK_ADDR = h2d("400000")       # set to the largest align(vaddr+memsz, 0x10000)
     REG_AT = 1
     REG_V0 = 2
     REG_V1 = 3
@@ -48,6 +53,8 @@ BEGIN {
 # DEBUG: can be set by using -vdebug=[item1,item2,...]
 #   "args": print each of the argv[0]..argv[argc-1] and their addresses
 #   "instr": list each instruction executed
+#   "nocheckregs": significant optimization that skips out of bound checks of registers
+#   "phdrs": list program header entries
 #   "syscall": list syscalls executed with params
 #   "writev": show the base and len of each iov in the writev syscall
 #   "write_u32": each time a word is written to memory at once
@@ -111,6 +118,10 @@ function barshift(num, times) {
     if (!times) return num;
     if (num < 0x80000000) return int(num / POW2[times])
     return 0x100000000 - POW2[32-times] + int(num / POW2[times])
+}
+
+function align(addr, sz) {
+    return int((addr + sz-1) / sz) * sz
 }
 
 function clz(num,
@@ -178,7 +189,7 @@ function load_elf_file(filename, ELF,
 }
 
 function load_elf_program(ELF, MEM, CPU,
-    phoff, i, type, offset, vaddr, filesz) {
+    phoff, i, type, offset, vaddr, filesz, memsz) {
     for (i = 0; i < 32; i++)
         CPU[i] = 0
     CPU["HI"] = CPU["LO"] = 0
@@ -188,12 +199,15 @@ function load_elf_program(ELF, MEM, CPU,
         offset = read_u32(ELF, phoff + 4)
         vaddr = read_u32(ELF, phoff + 8)
         filesz = read_u32(ELF, phoff + 16)
+        memsz = read_u32(ELF, phoff + 20)
         if (type == 0) {
             # PT_NULL:
         } else if (type == 1) {
             # PT_LOAD:
             for (i = 0; i < filesz; i++) MEM[vaddr + i] = ELF[offset + i]
-            #printf "loaded %d bytes at 0x%x to 0x%x\n", filesz, offset, vaddr
+            if (vaddr + memsz > BRK_ADDR) BRK_ADDR = align(vaddr + memsz, 0x1000)
+            if (DEBUG["phdrs"])
+                printf "loaded %d bytes at 0x%x to 0x%x (+0x%x)\n", filesz, offset, vaddr, memsz
         } else if (type == h2d("70000000")) {
             # PT_MIPS_REGINFO
             #CPU[REG_GP] = read_u32(ELF, offset + 0x4 * 5)
@@ -232,6 +246,14 @@ function load_stack(MEM, CPU, hex, args,
     }
     OFFSETS[n++] = 0
 
+    OFFSETS[n++] = 6 # AT_PAGESZ
+    OFFSETS[n++] = 4096
+    # AT_HWCAP: 0 (no support for either R6 nor MSA)
+    # AT_SYSINFO: TODO...
+
+    OFFSETS[n++] = 0 # AT_NULL
+    OFFSETS[n++] = 0
+
     # Now let's push the pointers to the stack:
     CPU[REG_SP] = INITIAL_SP - n*4
     for (i = 0; i < n; i++) {
@@ -239,10 +261,12 @@ function load_stack(MEM, CPU, hex, args,
     }
 }
 
-function read_u32(BYTES, p) {
+function read_u32(BYTES, p,
+    value) {
     # reads a 32bit unsigned little-endian int at position p in byte array BYTES
-    #printf "  reading from %x\n", p
-    return BYTES[p] + 256*(BYTES[p+1] + 256*(BYTES[p+2] + 256*BYTES[p+3]))
+    value = BYTES[p] + 256*(BYTES[p+1] + 256*(BYTES[p+2] + 256*BYTES[p+3]))
+    #printf "  reading from %x: %x\n", p, value
+    return value
 }
 
 function write_u32(BYTES, p, value,
@@ -369,7 +393,14 @@ function run_emulator_instruction(MEM, CPU,
         } else if (funct==11) { # MOVN rd, rs, rt
             if (CPU[rt]) CPU[rd] = CPU[rs]
         } else if (funct==12) { # SYSCALL code
-            CPU[REG_V0] = syscall(MEM, CPU, CPU[REG_V0], CPU[4], CPU[5], CPU[6], CPU[7])
+            tmp = syscall(MEM, CPU, CPU[REG_V0], CPU[4], CPU[5], CPU[6], CPU[7])
+            if (tmp < 0) { # this is how we can signal an error:
+                CPU[REG_V0] = -tmp
+                CPU[REG_A3] = 1
+            } else { # ok:
+                CPU[REG_V0] = tmp
+                CPU[REG_A3] = 0
+            }
         } else if (funct==16) { # MFHI/CLZ
             if (!shmt) CPU[rd] = CPU["HI"];
             else error("clz or whatever is at " shmt " is not implemented")
@@ -585,7 +616,11 @@ function syscall(MEM, CPU, nr, a0, a1, a2, a3,
     # Called when a SYSCALL instruction is issued.
     if (DEBUG["syscall"]) printf "syscall(%d, 0x%x, 0x%x, 0x%x, 0x%x)\n", nr, a0, a1, a2, a3
     nr -= 4000
-    if (nr==54) { # int ioctl(int fd, unsigned long request, ...);
+    if (nr==45) { # int brk(void *addr);
+        # a0==NULL is used to query the BRK_ADDR
+        if (a0) BRK_ADDR = a0
+        return BRK_ADDR
+    } else if (nr==54) { # int ioctl(int fd, unsigned long request, ...);
         # uppermost 2 bits of a0 contain DIR (_IO=0, _IOW=1, _IOR=2, _IOWR=3)
         # then 14 bits for the size of the structure.
         # then 8 bits for the type
