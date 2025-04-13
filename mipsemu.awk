@@ -3,6 +3,9 @@
 #   hex
 #   args
 BEGIN {
+    start_time = 1744540199        # systime() is not in posix, so we start with a custom fake date
+    time_t_size = 4                # defaults to 4 bytes (32 bits)
+    simulated_frequency = 100000   # in Hertz
     INITIAL_SP =    h2d("300000")  # @ 3MiB (a stack of 3MiB should be enough for everyone)
     # usual .org:   h2d("400000")  # @ 4MiB
     VIDEO_RAM =   h2d("10000000")  # @ 256MiB (768B for palette + 64000B for frame-buffer)
@@ -49,6 +52,7 @@ BEGIN {
 #       after running next instruction
 #   "TLS_TP": thread pointer, only one thread is supported.
 #   "CYCLES": how many instructions were executed in total
+#   "LLBIT":  Set to 1 by LL, set to 0 by SC.  SC only writes to memory if CPU["LLBIT"] is 1
 
 # DEBUG: can be set by using -vdebug=[item1,item2,...]
 #   "args": print each of the argv[0]..argv[argc-1] and their addresses
@@ -401,6 +405,8 @@ function run_emulator_instruction(MEM, CPU,
                 CPU[REG_V0] = tmp
                 CPU[REG_A3] = 0
             }
+        } else if (funct==15) { # SYNC
+            # this one is easy, nothing to do here...
         } else if (funct==16) { # MFHI/CLZ
             if (!shmt) CPU[rd] = CPU["HI"];
             else error("clz or whatever is at " shmt " is not implemented")
@@ -603,8 +609,17 @@ function run_emulator_instruction(MEM, CPU,
         CPU[rt] = MEM[CPU[rs] + to_s16(imm)] + 0
     } else if (op==40) { # SB rt, imm(rs)
         MEM[CPU[rs] + to_s16(imm)] = CPU[rt] % 256
-    } else if (op==0x2b) { # SW rt, imm(rs)
+    } else if (op==43) { # SW rt, imm(rs)
         write_u32(MEM, CPU[rs] + to_s16(imm), CPU[rt])
+    } else if (op==48) { # LL rt, imm(rs)
+        CPU[rt] = read_u32(MEM, CPU[rs] + to_s16(imm))
+        CPU["LLBIT"] = 1
+    } else if (op==56) { # SC rt, imm(rs)
+        if (CPU["LLBIT"]) {
+            write_u32(MEM, CPU[rs] + to_s16(imm), CPU[rt])
+            CPU[rt] = 1
+            delete CPU["LLBIT"]
+        } else CPU[rt] = 0
     } else {
         error("unknown regular instruction")
     }
@@ -612,7 +627,7 @@ function run_emulator_instruction(MEM, CPU,
 }
 
 function syscall(MEM, CPU, nr, a0, a1, a2, a3,
-    lo, fd, s, i, base, len, j) {
+    lo, fd, s, i, base, len, j, tmp) {
     # Called when a SYSCALL instruction is issued.
     if (DEBUG["syscall"]) printf "syscall(%d, 0x%x, 0x%x, 0x%x, 0x%x)\n", nr, a0, a1, a2, a3
     nr -= 4000
@@ -643,6 +658,35 @@ function syscall(MEM, CPU, nr, a0, a1, a2, a3,
         }
         printf "%s", s >fd
         return length(s)
+    } else if (nr==166) { # int nanosleep(const struct timespec *req, struct timespec *rem);
+        # struct timespec { time_t tv_sec; long   tv_nsec; }
+        # Since sleeping is super heavyweight here (we have to run a process), we rather
+        # do nothing by default.
+        tmp = read_u32(MEM, a0)
+        if (time_t_size == 4) {
+            tmp += read_u32(MEM, a0+4) / 1e9
+        } else { # 8:
+            tmp += read_u32(MEM, a0+4) * 1e9
+            tmp += read_u32(MEM, a0+8) / 1e9
+        }
+        if (tmp < 0) return 0
+        CPU["CYCLES"] += int(tmp * simulated_frequency)
+        # print "sleeping for " tmp " seconds"
+        if (DEBUG["sleep"]) system("sleep "tmp)
+        return 0
+    } else if (nr==263) { # int clock_gettime(clockid_t clockid, struct timespec *tp);
+        # we are going to ignore clockid (a0)
+        # struct timespec {time_t tv_sec; long tv_nsec;}
+        tmp = start_time + int(CPU["CYCLES"] / simulated_frequency)
+        write_u32(MEM, a1, to_u32(tmp))
+        #print "tv_nsec:", CPU["CYCLES"], int(CPU["CYCLES"] / simulated_frequency % 1 * 1e9)
+        if (time_t_size == 4) {
+            write_u32(MEM, a1+4, int(CPU["CYCLES"] / simulated_frequency % 1 * 1e9))
+        } else { # 8:
+            write_u32(MEM, a1+4, int(tmp / POW2[32]))
+            write_u32(MEM, a1+8, int(CPU["CYCLES"] / simulated_frequency % 1 * 1e9))
+        }
+        return 0
     } else if (nr==246) { # void exit(int status);
         exit a0
     } else if (nr==252) { # pid_t set_tid_address(int *tidptr);

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define MAX_STACK_SIZE 1024
@@ -124,7 +125,20 @@ void command_mul() { push(pop() * pop()); }
 void command_neg() { push(-pop()); }
 void command_not() { push(~pop()); }
 void command_or() { push(pop() | pop()); }
+void command_realtime() {
+    static struct timeval start_time = {0, 0};
+    struct timeval t;
+    if (!start_time.tv_sec && !start_time.tv_usec) {
+        gettimeofday(&start_time, NULL);
+        push(0);
+        return;
+    }
+    gettimeofday(&t, NULL);
+    push((t.tv_sec - start_time.tv_sec)*1000 + (t.tv_usec - start_time.tv_usec)/1000);
+    //printf("time: %d, %d\n", t.tv_sec, t.tv_usec);
+}
 void command_sub() { int x = pop(); push(pop() - x); }
+void command_usleep() { usleep(pop()); }
 void command_udiv() {
     unsigned int q = pop();
     if (q == 0) error(1, "division by zero\n");
@@ -180,6 +194,7 @@ int main(int argc, char * argv[]) {
          * int1 int2 <or>    int:       computes bitwise int1 (inclusive) OR int2
          * int1 int2 <sub>   int:       computes int1 - int2
          * int1 int2 <udiv>  int:       computes unsigned division int1 / int2
+         *      int1 <usleep>:          waits for int1 microseconds
          *      int1 <weight> int:      computes the number of 1 bits in int1
          * int1 int2 <xor>   int:       computes bitwise int1 XOR int2
          **/
@@ -200,7 +215,9 @@ int main(int argc, char * argv[]) {
     register_command("neg", command_neg);
     register_command("not", command_not);
     register_command("or", command_or);
+    register_command("realtime", command_realtime);
     register_command("udiv", command_udiv);
+    register_command("usleep", command_usleep);
     register_command("sub", command_sub);
     register_command("weight", command_weight);
     register_command("xor", command_xor);
